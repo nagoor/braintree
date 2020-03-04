@@ -1,0 +1,13 @@
+{
+    "name": "nextl/braintree",
+    "description": "Braintree payment gateway manager",
+    "type": "library",
+    "authors": [
+        {
+            "name": "Nagoor Haneefa",
+            "email": "nagoorhaneefas@webwings.co.in"
+        }
+    ],
+    "minimum-stability": "dev",
+    "require": {}
+}
