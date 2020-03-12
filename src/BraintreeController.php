@@ -6,6 +6,8 @@ use Illuminate\Http\Request;
 use App\Http\Requests;
 use App\Http\Controllers\Controller;
 use Braintree;
+use Redirect;
+use Session;
 
 
 class BraintreeController extends Controller
@@ -27,72 +29,142 @@ class BraintreeController extends Controller
 
 	public function transaction(Request $request)
 	{
+		return view('braintree::transaction');
+	}
+
+	public function transaction_link(Request $request) 
+	{
+		$link = $request->segment(3);
+		return view('braintree::'.$link);
+	}
+
+	public function transaction_refund(Request $request) 
+	{
+		$transaction_id = $request->get('transaction_id');
+		try {
+			$result = $this->gateway->transaction()->refund($transaction_id);
+			$msg = '';
+			if(isset($result->errors)) {
+				foreach ($result->errors->deepAll() as $key => $value) {
+					$msg = $value->message;
+				}
+			}
+			if(isset($result->success) && $result->success==1) {
+				$msg = 'Refund Success!!';
+			}
+			Session::put('title', 'Refund Transaction');
+			Session::put('transaction_id', $transaction_id);
+			Session::put('success', $msg);
+			Session::put('url', 'braintree/transaction/transact_refund');
+			return view('braintree::success');			
+		} catch(Braintree\Exception $e) {
+			Session::put('title', 'Refund Transaction');
+			Session::put('transaction_id', $transaction_id);
+			Session::put('error', 'Invalid Transaction Id');
+			Session::put('url', 'braintree/transaction/transact_refund');
+			return view('braintree::errors');
+		}
+	}
+
+	public function transaction_sale(Request $request)
+	{
 	    //dd($request->all());
 	    $inputs = $request->all();
 	    
-	    //$gateway = $this->gateway;
-		// echo '<pre>';
-		// print_r($paymentMethod);
-		// die;
+	    try {
+			$result = $this->gateway->transaction()->sale([
+			  'amount' => $inputs['amount'],
+			  'orderId' => rand(1,500000),
+			  'merchantAccountId' => 'testnm',
+			  'paymentMethodNonce' => 'fake-valid-nonce',
+			  'options' => [
+			    'submitForSettlement' => true
+			  ]
+			]); //echo '<pre>'; print_r($result); die;
+			$msg = '';
+			if(isset($result->errors)) {
+				foreach ($result->errors->deepAll() as $key => $value) {
+					$msg = $value->message;
+				}
+			}
+			if(isset($result->success) && $result->success==1) {
+				$msg = 'Transaction Success!!';
+			}
+			Session::put('title', 'Transaction Sales');
+			Session::put('transaction_id', @$result->transaction->id);
+			Session::put('success', $msg);
+			Session::put('url', 'braintree/transaction/transact_sale');
+			return view('braintree::success');			
+		} catch(Braintree\Exception $e) {
+			Session::put('title', 'Transaction Sales');
+			Session::put('error', $msg);
+			Session::put('url', 'braintree/transaction/transact_sale');
+			return view('braintree::errors');
+		}
+	}
 
-		// Then, create a transaction:
-		$result = $this->gateway->transaction()->sale([
-		  'amount' => $inputs['amount'],
-		  'orderId' => rand(1,500000),
-		  'merchantAccountId' => 'testnm',
-		  'paymentMethodNonce' => 'fake-valid-nonce',
-		  //'deviceData' => $deviceDataFromTheClient,
-		  // 'customer' => [
-		  //   'firstName' => 'Drew',
-		  //   'lastName' => 'Smith',
-		  //   'company' => 'Braintree',
-		  //   'phone' => '312-555-1234',
-		  //   'fax' => '312-555-1235',
-		  //   'website' => 'http://www.example.com',
-		  //   'email' => 'drew@example.com'echo '<a href="'.url('braintree/payment').'">Back to payment</a>';
-		  // ],
-		  // 'billing' => [
-		  //   'firstName' => 'Paul',
-		  //   'lastName' => 'Smith',
-		  //   'company' => 'Braintree',
-		  //   'streetAddress' => '1 E Main St',
-		  //   'extendedAddress' => 'Suite 403',
-		  //   'locality' => 'Chicago',
-		  //   'region' => 'IL',
-		  //   'postalCode' => '60622',
-		  //   'countryCodeAlpha2' => 'US'
-		  // ],
-		  // 'shipping' => [
-		  //   'firstName' => 'Jen',
-		  //   'lastName' => 'Smith',
-		  //   'company' => 'Braintree',
-		  //   'streetAddress' => '1 E 1st St',
-		  //   'extendedAddress' => 'Suite 403',
-		  //   'locality' => 'Bartlett',
-		  //   'region' => 'IL',
-		  //   'postalCode' => '60103',
-		  //   'countryCodeAlpha2' => 'US'
-		  // ],
-		  'options' => [
-		    'submitForSettlement' => true
-		  ]
-		]);
+	public function transaction_search(Request $request)
+	{
+	    //dd($request->all());
+		$transaction_id = $request->get('transaction_id');
 
-		if ($result->success) {
-			echo '<pre>';
-		    print_r("success!: " . $result->transaction->id);
-		    echo '<br/><br/><a href="'.url('braintree/payment').'" style="color: red;">Back to payment</a>';
-		} else if ($result->transaction) {
-			echo '<pre>';
-		    print_r("Error processing transaction:");
-		    print_r("\n  code: " . $result->transaction->processorResponseCode);
-		    print_r("\n  text: " . $result->transaction->processorResponseText);
-		    echo '<a href="'.url('braintree/payment').'" style="color: red;">Back to payment</a>';
-		} else {
-			echo '<pre>';
-		    print_r("Validation errors: \n");
-		    print_r($result->errors->deepAll());
-		    echo '<a href="'.url('braintree/payment').'" style="color: red;">Back to payment</a>';
+		try {
+	    	$transaction = $this->gateway->transaction()->find($transaction_id);
+	    	//echo '<pre>'; print_r($transaction); die;
+	    	return view('braintree::viewtransaction',compact('transaction'));
+	    } catch(Braintree\Exception $e) {
+			Session::put('title', 'Transaction Search');
+			Session::put('transaction_id', $transaction_id);
+			Session::put('error', "Transaction id isn't found");
+			Session::put('url', 'braintree/transaction/transact_search');
+			return view('braintree::errors');
+		}
+	}
+
+	public function transaction_all(Request $request)
+	{
+		return redirect()->back();	
+	}
+
+	public function customer()
+	{
+		return view('braintree::customer');
+	}
+
+	public function create_customer(Request $request)
+	{
+	    //dd($request->all());
+		$inputs = $request->all();
+
+		try {
+		    $result = $this->gateway->customer()->create([
+			    'firstName' => $inputs['firstName'],
+			    'lastName' => $inputs['lastName'],
+			    'company' => $inputs['company'],
+			    'email' => $inputs['email'],
+			    'phone' => $inputs['phone'],
+			    'fax' => $inputs['fax'],
+			    'website' => $inputs['website']
+			]);
+		    $msg = '';
+			if(isset($result->errors)) {
+				foreach ($result->errors->deepAll() as $key => $value) {
+					$msg = $value->message;
+				}
+			}
+			if(isset($result->success) && $result->success==1) {
+				$msg = 'Customer Success!!';
+			}
+			Session::put('title', 'Create Customer');
+			Session::put('customer_id', @$result->customer->id);
+			Session::put('success', $msg);
+			Session::put('url', 'braintree/customer');
+			return view('braintree::customersuccess');			
+		} catch(Braintree\Exception $e) {
+			Session::put('title', 'Create Customer');
+			Session::put('error', $msg);
+			Session::put('url', 'braintree/customer');
+			return view('braintree::customererrors');
 		}
 	}
 }
