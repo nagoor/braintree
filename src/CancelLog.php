@@ -4,8 +4,8 @@ namespace Nextl\braintree;
 
 use Jenssegers\Mongodb\Eloquent\Model as Eloquent;
 
-class TransactionLog extends Eloquent
+class CancelLog extends Eloquent
 {
     protected $connection = 'mongodb';
-    protected $collection = 'transaction_log';
+    protected $collection = 'cancel_log';
 }

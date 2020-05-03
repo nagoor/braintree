@@ -1,6 +1,6 @@
 <?php
 
-namespace Nextl\braintree;
+namespace Nextl\btree;
 
 use Illuminate\Http\Request;
 use App\Http\Requests;
@@ -8,8 +8,6 @@ use App\Http\Controllers\Controller;
 use Braintree;
 use Redirect;
 use Session;
-use Nextl\braintree\PaymentLog;
-use Nextl\braintree\TransactionLog;
 use DB;
 
 class BraintreeController extends Controller
@@ -27,29 +25,20 @@ class BraintreeController extends Controller
     public function signup(Request $request) 
     {
     	$userId = $request->get('userId');
-    	$packageId = $request->get('packageId');
+    	$package = $request->get('package');
     	$price = $request->get('price');
     	$trailPeriod = $request->get('trailPeriod'); // in number
+		$response = array();	
 
-    	try {
-    		if($userId==''&&$packageId==''&&$price==''&&$trailPeriod=='') {
-		    	throw new \Exception("These fields are required. <br/> (User Id & Package Id, Price, Trail Priod is Missing!)");
-		    }
-		    else if($userId=='') {
-		    	throw new \Exception("User Id is required");
-		    }
-		    else if($packageId=='') {
-		    	throw new \Exception("Package Id is required");
-		    }
-		    else if($price=='') {
-		    	throw new \Exception("Price is required");
-		    }
-		    else if($trailPeriod=='') {
-		    	throw new \Exception("Trail Period is required");
+    	try 
+    	{
+    		if($userId==''||$package==''||$price==''||$trailPeriod=='') {
+		    	$response['status'] = 0;
+		    	$response['message'] = 'User Id, Package, Price and Trail period is required';
+		    	return json_encode($response); 	    
 		    }
 
-		    // Braintree billing 
-
+		    # Braintree billing 
 		    # create customer
 		    $result = $this->gateway->customer()->create([
 			    'id' => 'USR_'.$userId,
@@ -57,12 +46,15 @@ class BraintreeController extends Controller
 			]);
 			$paymentMethodToken = '';
 			$customerId = '';
+			$package = $package.'_USR_'.$userId;
 			if ($result->success) {
 				$customerId = $result->customer->id;
 			    $paymentMethodToken = $result->customer->paymentMethods[0]->token;
 			} else {
 			    foreach($result->errors->deepAll() AS $error) {
-			        throw new \Exception($error->code . ": " . $error->message . "\n");
+			        $response['status'] = 0;
+		    		$response['message'] = $error->message;
+		    		return json_encode($response); 	    
 			    }
 			}
 
@@ -72,9 +64,14 @@ class BraintreeController extends Controller
 			if($trailPeriod==0) {				
 				$result = $this->gateway->subscription()->create([
 				  'paymentMethodToken' => $paymentMethodToken,
-				  'planId' => 'm73b',	
+				  'planId' => 'm73b',
 				  'price' => $price,	
-				  'options' => ['startImmediately' => true]
+				  'trialPeriod' => false,
+  				  'trialDuration' => 0
+				]);
+				$this->gateway->subscription()->update($result->subscription->id, [
+				    'id' => $package,
+				    'paymentMethodToken' => $paymentMethodToken
 				]);
 			} 
 
@@ -92,73 +89,219 @@ class BraintreeController extends Controller
 				  'price' => $price,
 				  'firstBillingDate' => $billDate,
 				]);
+				$this->gateway->subscription()->update($result->subscription->id, [
+				    'id' => $package,
+				    'paymentMethodToken' => $paymentMethodToken
+				]);
 			}
 
-			if ($result->success) {
 
-				# store payment log
-			    $paymentLog = array(
+			if ($result->success) {
+			    # store transaction log
+			    $res = $this->gateway->transaction()->sale([
+				  'amount' => $price,
+				  'paymentMethodNonce' => 'fake-valid-nonce',
+				  'customerId' => $customerId,
+				  'options' => [
+				    'submitForSettlement' => true
+				   ]
+				]);
+			    $transactionLog = array(
 			    	'userId'=>$userId,
-		            'packageId'=>$packageId,
-		            'timePeriod'=>$trailPeriod,
+		            'package'=>$package,
+		            'transactionId'=>$res->transaction->id,
+		            'status'=>$res->transaction->status,
+		            'type'=>$res->transaction->type,
+		            'currencyIsoCode'=>$res->transaction->currencyIsoCode,
+		            'amount'=>$res->transaction->amount,
+		            'merchantAccountId'=>$res->transaction->merchantAccountId,
+		            'orderId'=>$res->transaction->orderId,
+		            'createdAt'=>$res->transaction->createdAt->format('Y-m-d H:i:s'),
+		            'customerId'=>$customerId,
 		            'balance'=>$result->subscription->balance,
-		            'billingDayOfMonth'=>$result->subscription->billingDayOfMonth,
 		            'billingPeriodEndDate'=>(isset($result->subscription->billingPeriodEndDate) && $result->subscription->billingPeriodEndDate!='')?$result->subscription->billingPeriodEndDate->format('Y-m-d H:i:s'):'',
 		            'billingPeriodStartDate'=>(isset($result->subscription->billingPeriodStartDate) && $result->subscription->billingPeriodStartDate!='')?$result->subscription->billingPeriodStartDate->format('Y-m-d H:i:s'):'',
-		            'paymentDate'=>$result->subscription->createdAt->format('Y-m-d H:i:s'),
-		            'currentBillingCycle'=>$result->subscription->currentBillingCycle,
-		            'daysPastDue'=>$result->subscription->daysPastDue,
-		            'firstBillingDate'=>@$result->subscription->firstBillingDate->format('Y-m-d H:i:s'),
+		            'firstBillingDate'=>$result->subscription->firstBillingDate->format('Y-m-d H:i:s'),
 		            'subscriptionId'=>$result->subscription->id,
-		            'merchantAccountId'=>$result->subscription->merchantAccountId,
 		            'nextBillAmount'=>$result->subscription->nextBillAmount,
-		            'nextBillingDate'=>@$result->subscription->nextBillingDate->format('Y-m-d H:i:s'),
-		            'numberOfBillingCycles'=>$result->subscription->numberOfBillingCycles,
+		            'nextBillingDate'=>$result->subscription->nextBillingDate->format('Y-m-d H:i:s'),
 		            'paymentMethodToken'=>$result->subscription->paymentMethodToken,
-		            'planId'=>$result->subscription->planId,
-		            'price'=>$result->subscription->price,
-		            'status'=>$result->subscription->status
+		            'planId'=>$result->subscription->planId
 			    ); 
-			    DB::collection('payment_log')->insert($paymentLog);
+			    DB::collection('transaction_log')->insert($transactionLog);
 
-
-			    # store transaction log
-			    if($trailPeriod!=0) {	
-				    $result = $this->gateway->transaction()->sale([
-					  'amount' => $price,
-					  'paymentMethodNonce' => 'fake-valid-nonce',
-					  'customerId' => $customerId,
-					  'options' => [
-					    'submitForSettlement' => true
-					   ]
-					]);
-				    $transactionLog = array(
-				    	'userId'=>$userId,
-			            'packageId'=>$packageId,
-			            'transactionId'=>$result->transaction->id,
-			            'status'=>$result->transaction->status,
-			            'type'=>$result->transaction->type,
-			            'currencyIsoCode'=>@$result->transaction->currencyIsoCode,
-			            'amount'=>@$result->transaction->amount,
-			            'merchantAccountId'=>$result->transaction->merchantAccountId,
-			            'orderId'=>$result->transaction->orderId,
-			            'createdAt'=>$result->transaction->createdAt->format('Y-m-d H:i:s'),
-			            'customerId'=>@$result->transaction->customer->id
-				    ); 
-				    DB::collection('transaction_log')->insert($transactionLog);
-				}
-
-			    echo 'Success';
+			    $response['status'] = 1;
+		    	$response['message'] = 'Success';
+		    	return json_encode($response); 	    
 
 			} else {
 			    foreach($result->errors->deepAll() AS $error) {
-			        throw new \Exception($error->code . ": " . $error->message . "\n");
+			        $response['status'] = 0;
+		    		$response['message'] = $error->message;
+		    		return json_encode($response); 	    
 			    }
 			}
-
 		}
 		catch (\Exception $e) {
-		    echo "Message: " . $e->getMessage();	    
+		    $response['status'] = 0;
+		    $response['message'] = $e->getMessage();
+		    return json_encode($response); 	    
+		}
+    }
+
+    public function packupgrade(Request $request) 
+    {
+    	$userId = $request->get('userId');
+    	$package = $request->get('package');
+    	$billingDate = $request->get('billingDate');
+		$response = array();	
+
+		try 
+    	{
+    		if($userId==''||$package==''||$billingDate=='') {
+		    	$response['status'] = 0;
+		    	$response['message'] = 'User Id, Package & Billing date is required';
+		    	return json_encode($response); 	    
+		    }
+
+		    # package upgradation
+		    # Effective Immediately
+		    # get old package price to upgrade
+		    $subscriptionId = $package.'_USR_'.$userId;
+			$result = $this->gateway->subscription()->find($subscriptionId);
+			//echo '<pre>'; print_r($result); die;
+
+			if ($result->id!='') {
+
+				$monthlyCost = $result->price;
+				$nextBillingDate = $result->nextBillingDate->format('Y-m-d H:i:s');
+				$paymentMethodToken = $result->paymentMethodToken;
+
+				if($billingDate==0) {						
+					$date1 = date('Y-m-d'); 
+					$date2 = $nextBillingDate; 
+					$diff = strtotime($date2) - strtotime($date1); 
+					$remainingDays = abs(round($diff / 86400)); 
+					$newPrice = ($monthlyCost/30)*$remainingDays;
+					$newPrice = number_format($newPrice,2);					
+
+					$result1 = $this->gateway->subscription()->update($subscriptionId, [
+					    'id' => $subscriptionId,
+					    'paymentMethodToken' => $paymentMethodToken,
+					    'price' => $newPrice,
+					    'planId' => 'm73b'
+					]);
+					$result2 = $this->gateway->transaction()->sale([
+					  'amount' => $newPrice,
+					  'paymentMethodNonce' => 'fake-valid-nonce',
+					  'options' => [
+					    'submitForSettlement' => false
+					  ]
+					]);
+					echo '<pre>'; print_r($result1); echo '<hr/>'; print_r($result2); die;
+				} else {
+					$newPrice = $result->price;
+					$result1 = $this->gateway->subscription()->update($subscriptionId, [
+					    'id' => $subscriptionId,
+					    'paymentMethodToken' => $paymentMethodToken,
+					    'price' => $newPrice,
+					    'planId' => 'm73b',
+					    'firstBillingDate' => $billingDate
+					]);
+					$result2 = $this->gateway->transaction()->sale([
+					  'amount' => $newPrice,
+					  'paymentMethodNonce' => 'fake-valid-nonce',
+					  'options' => [
+					    'submitForSettlement' => true
+					  ]
+					]);
+					echo '<pre>'; print_r($result1); echo '<hr/>'; print_r($result2); die;
+				}
+
+			} else {
+			    foreach($result->errors->deepAll() AS $error) {
+			        $response['status'] = 0;
+		    		$response['message'] = $error->message;
+		    		return json_encode($response); 	    
+			    }
+			}			
+		}
+		catch (\Exception $e) {
+		    $response['status'] = 0;
+		    $response['message'] = $e->getMessage();
+		    return json_encode($response); 	    
+		}
+    }
+
+    public function packcancel(Request $request) 
+    {
+    	$userId = $request->get('userId');
+    	$package = $request->get('package');
+		$response = array();	
+
+    	try 
+    	{
+    		if($userId==''||$package=='') {
+		    	$response['status'] = 0;
+		    	$response['message'] = 'User Id & Package is required';
+		    	return json_encode($response); 	    
+		    }
+
+		    # package cancel
+		    # get subscription id
+			$subscriptionId = '';
+			$subscriptionId = $package.'_USR_'.$userId;
+
+			$result = $this->gateway->subscription()->find($subscriptionId);
+			//echo '<pre>'; print_r($result); die;
+
+			if ($result->id!='') 
+			{
+				# subscription cancel
+				$result = $this->gateway->subscription()->cancel($subscriptionId);
+				if ($result->success) {				
+					$transactionLog = array(
+				    	'userId'=>$userId,
+			            'package'=>$package,
+			            'balance'=>$result->subscription->balance,
+			            'billingPeriodEndDate'=>(isset($result->subscription->billingPeriodEndDate) && $result->subscription->billingPeriodEndDate!='')?$result->subscription->billingPeriodEndDate->format('Y-m-d H:i:s'):'',
+			            'billingPeriodStartDate'=>(isset($result->subscription->billingPeriodStartDate) && $result->subscription->billingPeriodStartDate!='')?$result->subscription->billingPeriodStartDate->format('Y-m-d H:i:s'):'',
+			            'createdAt'=>$result->subscription->createdAt->format('Y-m-d H:i:s'),
+			            'firstBillingDate'=>$result->subscription->firstBillingDate,
+			            'id'=>$result->subscription->id,
+			            'merchantAccountId'=>$result->subscription->merchantAccountId,
+			            'nextBillAmount'=>$result->subscription->nextBillAmount,
+			            'nextBillingDate'=>$result->subscription->nextBillingDate,
+			            'paymentMethodToken'=>$result->subscription->paymentMethodToken,
+			            'planId'=>$result->subscription->planId,
+			            'price'=>$result->subscription->price,
+			            'status'=>$result->subscription->status,
+			            'cancelledDate'=>date('Y-m-d')
+				    ); 
+				    DB::collection('cancel_log')->insert($transactionLog);		
+
+				    $response['status'] = 1;
+			    	$response['message'] = 'Success';
+			    	return json_encode($response); 	
+			   	} else {
+				    foreach($result->errors->deepAll() AS $error) {
+				        $response['status'] = 0;
+			    		$response['message'] = $error->message;
+			    		return json_encode($response); 	    
+				    }
+				}
+			} else {
+			    foreach($result->errors->deepAll() AS $error) {
+			        $response['status'] = 0;
+		    		$response['message'] = $error->message;
+		    		return json_encode($response); 	    
+			    }
+			}		
+		}
+		catch (\Exception $e) {
+		    $response['status'] = 0;
+		    $response['message'] = $e->getMessage();
+		    return json_encode($response); 	    
 		}
     }
 }
