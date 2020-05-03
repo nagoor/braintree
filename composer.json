@@ -1,5 +1,5 @@
 {
-    "name": "nextl/braintree",
+    "name": "nextl/btree",
     "description": "Braintree payment gateway manager",
     "type": "library",
     "authors": [
