@@ -1,6 +1,6 @@
 <?php
 
-namespace Nextl\btree;
+namespace Nextl\braintree;
 
 use Illuminate\Http\Request;
 use App\Http\Requests;
